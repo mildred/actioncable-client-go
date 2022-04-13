@@ -1,6 +1,7 @@
 package actioncable
 
 import (
+	"context"
 	"encoding/json"
 	"net/url"
 )
@@ -58,7 +59,8 @@ func (c *Consumer) send(data map[string]interface{}) error {
 	return c.connection.send(data)
 }
 
-func (c *Consumer) Connect() {
+func (c *Consumer) Connect(ctx context.Context) {
+	// FIXME: do something with this context
 	connection := newConnection(c.url.String())
 	connection.consumer = c
 
@@ -69,7 +71,7 @@ func (c *Consumer) Connect() {
 	}
 
 	connection.subscriptions = c.Subscriptions
-	connection.start()
+	connection.start(ctx)
 
 	c.connection = connection
 }

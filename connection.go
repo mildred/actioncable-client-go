@@ -1,6 +1,7 @@
 package actioncable
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -32,7 +33,7 @@ type connection struct {
 	recieveCh     chan Event
 	isReady       bool
 	readyCh       chan struct{}
-	stopCh        chan struct{}
+	cancel        context.CancelFunc
 	pingedAt      time.Time
 	connectedAt   time.Time
 	lockForSend   *sync.Mutex
@@ -53,20 +54,21 @@ func newConnection(url string) *connection {
 	}
 }
 
-func (c *connection) start() {
-	c.stopCh = make(chan struct{}, 1)
-	go c.connectionLoop()
-	c.waitUntilReady()
+func (c *connection) start(ctx0 context.Context) {
+	var ctx context.Context
+	ctx, c.cancel = context.WithCancel(ctx0)
+	go c.connectionLoop(ctx)
+	c.waitUntilReady(ctx)
 }
 
 func (c *connection) stop() error {
 	c.ws.Close()
-	c.stopCh <- struct{}{}
+	c.cancel()
 
 	return nil
 }
 
-func (c *connection) connectionLoop() {
+func (c *connection) connectionLoop(ctx context.Context) {
 	b := backoff.Backoff{
 		Min:    100 * time.Millisecond,
 		Max:    5000 * time.Millisecond,
@@ -74,7 +76,9 @@ func (c *connection) connectionLoop() {
 		Jitter: true,
 	}
 	defer func() {
-		c.ws.Close()
+		if c.ws != nil {
+			c.ws.Close()
+		}
 	}()
 
 	/*
@@ -85,10 +89,10 @@ func (c *connection) connectionLoop() {
 		from server, and notify to event handler.
 	*/
 RECONNECT_LOOP:
-	for {
+	for ctx.Err() == nil {
 		c.isReady = false
 
-		err := c.establishConnection()
+		err := c.establishConnection(ctx)
 		if err != nil {
 			logger.Infof("failed to connect, %s\n", err)
 		} else {
@@ -97,7 +101,7 @@ RECONNECT_LOOP:
 		}
 
 		select {
-		case <-c.stopCh:
+		case <-ctx.Done():
 			break RECONNECT_LOOP
 		case <-time.After(b.Duration()): // exponential backoff
 			logger.Infof("reconnecting")
@@ -107,8 +111,8 @@ RECONNECT_LOOP:
 	return
 }
 
-func (c *connection) establishConnection() error {
-	ws, _, err := c.dialer.Dial(c.url, *c.header)
+func (c *connection) establishConnection(ctx context.Context) error {
+	ws, _, err := c.dialer.DialContext(ctx, c.url, *c.header)
 	if err != nil {
 		return err
 	}
@@ -206,9 +210,14 @@ func (c *connection) ready() {
 	c.readyCh <- struct{}{}
 }
 
-func (c *connection) waitUntilReady() {
+func (c *connection) waitUntilReady(ctx context.Context) {
 	if !c.isReady {
-		_ = <-c.readyCh
+		select {
+		case _ = <-c.readyCh:
+			break
+		case <-ctx.Done():
+			break
+		}
 	}
 }
 
