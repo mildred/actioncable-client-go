@@ -59,7 +59,7 @@ func (c *Consumer) send(data map[string]interface{}) error {
 	return c.connection.send(data)
 }
 
-func (c *Consumer) Connect(ctx context.Context) {
+func (c *Consumer) Connect(ctx context.Context) error {
 	// FIXME: do something with this context
 	connection := newConnection(c.url.String())
 	connection.consumer = c
@@ -71,9 +71,13 @@ func (c *Consumer) Connect(ctx context.Context) {
 	}
 
 	connection.subscriptions = c.Subscriptions
-	connection.start(ctx)
+	err := connection.start(ctx)
+	if err != nil {
+		return err
+	}
 
 	c.connection = connection
+	return nil
 }
 
 func (c *Consumer) Disconnect() {

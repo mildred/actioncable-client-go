@@ -3,6 +3,7 @@ package actioncable
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -32,7 +33,7 @@ type connection struct {
 	header        *http.Header
 	recieveCh     chan Event
 	isReady       bool
-	readyCh       chan struct{}
+	readyCh       chan error
 	cancel        context.CancelFunc
 	pingedAt      time.Time
 	connectedAt   time.Time
@@ -49,16 +50,16 @@ func newConnection(url string) *connection {
 		header:      &http.Header{},
 		recieveCh:   make(chan Event, 1),
 		isReady:     false,
-		readyCh:     make(chan struct{}, 1),
+		readyCh:     make(chan error, 1),
 		lockForSend: new(sync.Mutex),
 	}
 }
 
-func (c *connection) start(ctx0 context.Context) {
+func (c *connection) start(ctx0 context.Context) error {
 	var ctx context.Context
 	ctx, c.cancel = context.WithCancel(ctx0)
 	go c.connectionLoop(ctx)
-	c.waitUntilReady(ctx)
+	return c.waitUntilReady(ctx)
 }
 
 func (c *connection) stop() error {
@@ -93,18 +94,25 @@ RECONNECT_LOOP:
 		c.isReady = false
 
 		err := c.establishConnection(ctx)
+		var disconnectError *DisconnectError
 		if err != nil {
 			logger.Infof("failed to connect, %s\n", err)
 		} else {
 			b.Reset() // reset the backoff delay when connection established
-			c.eventHandlerLoop()
+			c.eventHandlerLoop(&disconnectError)
 		}
 
 		select {
 		case <-ctx.Done():
 			break RECONNECT_LOOP
 		case <-time.After(b.Duration()): // exponential backoff
-			logger.Infof("reconnecting")
+			if disconnectError == nil || disconnectError.Reconnect(true) {
+				logger.Infof("reconnecting")
+			} else {
+				logger.Infof("not reconnecting: %s", disconnectError.Error())
+				c.readyCh <- disconnectError
+				break RECONNECT_LOOP
+			}
 		}
 	}
 
@@ -122,7 +130,7 @@ func (c *connection) establishConnection(ctx context.Context) error {
 	return nil
 }
 
-func (c *connection) eventHandlerLoop() {
+func (c *connection) eventHandlerLoop(disconnectError **DisconnectError) {
 	for {
 		event, err := c.receive() // wait max `DEFAULT_STALE_THRESHOLD` sec until recive new message
 
@@ -149,6 +157,7 @@ func (c *connection) eventHandlerLoop() {
 			c.subscriptions.reject(event.Identifier)
 		case "disconnect":
 			// close
+			*disconnectError = &DisconnectError{event}
 			se := createSubscriptionEvent(Disconnected, event)
 			c.subscriptions.notifyAll(se)
 			return
@@ -157,6 +166,35 @@ func (c *connection) eventHandlerLoop() {
 			c.subscriptions.notify(event.Identifier, se)
 		}
 	}
+}
+
+type DisconnectError struct {
+	event *Event
+}
+
+func (de *DisconnectError) Reconnect(defValue bool) bool {
+	var reconnect = defValue
+	de.event.GetReconnect(&reconnect)
+	return reconnect
+}
+
+func (de *DisconnectError) Error() string {
+	var reconnectVal bool
+	hasReconnect := de.event.GetReconnect(&reconnectVal)
+	var reconnect string
+
+	if hasReconnect && reconnectVal {
+		reconnect = "reconnect: true"
+	} else if hasReconnect {
+		reconnect = "reconnect: false"
+	} else {
+		reconnect = "reconnect: unspecified"
+	}
+
+	var reason string
+	de.event.GetReason(&reason)
+
+	return fmt.Sprintf("disconnect: %v (%s)", reason, reconnect)
 }
 
 func (c *connection) receive() (*Event, error) {
@@ -206,19 +244,22 @@ func (c *connection) send(data map[string]interface{}) error {
 
 func (c *connection) ready() {
 	c.isReady = true
-	clearCh(c.readyCh)
-	c.readyCh <- struct{}{}
+	close(c.readyCh)
 }
 
-func (c *connection) waitUntilReady(ctx context.Context) {
+func (c *connection) waitUntilReady(ctx context.Context) error {
 	if !c.isReady {
 		select {
-		case _ = <-c.readyCh:
+		case err := <-c.readyCh:
+			if err != nil {
+				return err
+			}
 			break
 		case <-ctx.Done():
 			break
 		}
 	}
+	return nil
 }
 
 func (c *connection) recordPing() {
@@ -228,10 +269,4 @@ func (c *connection) recordPing() {
 func (c *connection) recordConnect() {
 	c.recordPing()
 	c.connectedAt = time.Now()
-}
-
-func clearCh(ch chan struct{}) {
-	for len(ch) > 0 {
-		_ = <-ch
-	}
 }
