@@ -149,7 +149,7 @@ func (c *connection) eventHandlerLoop() {
 			c.subscriptions.reject(event.Identifier)
 		case "disconnect":
 			// close
-			se := createSubscriptionEvent(Disconnected, nil)
+			se := createSubscriptionEvent(Disconnected, event)
 			c.subscriptions.notifyAll(se)
 			return
 		default:
