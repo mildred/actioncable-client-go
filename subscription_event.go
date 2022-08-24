@@ -5,6 +5,7 @@ import (
 )
 
 type SubscriptionEvent struct {
+	Error      error
 	Type       SubscriptionEventType
 	Message    map[string]interface{}
 	RawMessage *json.RawMessage
@@ -17,6 +18,7 @@ const (
 	Disconnected SubscriptionEventType = SubscriptionEventType("disconnected")
 	Rejected     SubscriptionEventType = SubscriptionEventType("rejected")
 	Received     SubscriptionEventType = SubscriptionEventType("received")
+	Error        SubscriptionEventType = SubscriptionEventType("ERROR")
 )
 
 func createSubscriptionEvent(eventType SubscriptionEventType, event *Event) *SubscriptionEvent {

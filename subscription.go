@@ -58,17 +58,21 @@ func (s *Subscription) SetHandler(h SubscriptionEventHandler) {
 		for {
 			select {
 			case se := <-s.NotifyCh:
-				switch se.Type {
-				case Connected:
-					h.OnConnected(se)
-				case Disconnected:
-					h.OnDisconnected(se)
-				case Rejected:
-					h.OnRejected(se)
-				case Received:
-					h.OnReceived(se)
-				default:
-					logger.Warnf("unknown subscription event: %v", se)
+				if se.Error != nil {
+					h.OnError(se.Error)
+				} else {
+					switch se.Type {
+					case Connected:
+						h.OnConnected(se)
+					case Disconnected:
+						h.OnDisconnected(se)
+					case Rejected:
+						h.OnRejected(se)
+					case Received:
+						h.OnReceived(se)
+					default:
+						logger.Warnf("unknown subscription event: %v", se)
+					}
 				}
 			case doneCh := <-s.stopHandleCh:
 				doneCh <- struct{}{}

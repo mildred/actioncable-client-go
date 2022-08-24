@@ -5,4 +5,5 @@ type SubscriptionEventHandler interface {
 	OnDisconnected(*SubscriptionEvent)
 	OnRejected(*SubscriptionEvent)
 	OnReceived(*SubscriptionEvent)
+	OnError(error)
 }

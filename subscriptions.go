@@ -40,6 +40,12 @@ func (s *Subscriptions) remove(subscription *Subscription) *Subscription {
 	return subscription
 }
 
+func (s *Subscriptions) notifyError(err error) {
+	for _, subscription := range s.subscriptions {
+		subscription.NotifyCh <- &SubscriptionEvent{err, Error, nil, nil}
+	}
+}
+
 func (s *Subscriptions) reject(identifier *ChannelIdentifier) []*Subscription {
 	matches := s.findAll(identifier)
 

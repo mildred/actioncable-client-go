@@ -69,7 +69,17 @@ func (c *connection) stop() error {
 	return nil
 }
 
-func (c *connection) connectionLoop(ctx context.Context) {
+func (c *connection) connectionLoop(ctx context.Context) (rerr error) {
+	defer func(){
+		if p := recover(); p != nil {
+			err := fmt.Errorf("panic: %v", p)
+			logger.Errorf("Error in connection loop: %v", err)
+		}
+	}()
+
+	logger.Infof("Start connection loop to %s\n", c.url)
+	defer logger.Infof("Stop connection loop to %s\n", c.url)
+
 	b := backoff.Backoff{
 		Min:    100 * time.Millisecond,
 		Max:    5000 * time.Millisecond,
@@ -110,7 +120,12 @@ RECONNECT_LOOP:
 				logger.Infof("reconnecting")
 			} else {
 				logger.Infof("not reconnecting: %s", disconnectError.Error())
-				c.readyCh <- disconnectError
+				if c.isReady {
+					err := fmt.Errorf("not reconnecting, %s", disconnectError.Error())
+					c.subscriptions.notifyError(err)
+				} else {
+					c.readyCh <- disconnectError
+				}
 				break RECONNECT_LOOP
 			}
 		}
@@ -243,8 +258,10 @@ func (c *connection) send(data map[string]interface{}) error {
 }
 
 func (c *connection) ready() {
+	if !c.isReady {
+		close(c.readyCh)
+	}
 	c.isReady = true
-	close(c.readyCh)
 }
 
 func (c *connection) waitUntilReady(ctx context.Context) error {
