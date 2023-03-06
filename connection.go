@@ -106,7 +106,13 @@ RECONNECT_LOOP:
 		err := c.establishConnection(ctx)
 		var disconnectError *DisconnectError
 		if err != nil {
-			logger.Infof("failed to connect, %s\n", err)
+			if ! c.isReady {
+				logger.Infof("failed to connect (stop), %s\n", err)
+				c.readyCh <- err
+				break RECONNECT_LOOP
+			} else {
+				logger.Infof("failed to connect (retry), %s\n", err)
+			}
 		} else {
 			b.Reset() // reset the backoff delay when connection established
 			c.eventHandlerLoop(&disconnectError)
